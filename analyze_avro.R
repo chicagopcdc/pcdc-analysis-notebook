@@ -1,5 +1,5 @@
 # Load libraries
-required_pkgs <- c("sparklyr", "dplyr", "data.table", "purrr", "tibble", "writexl", "ggplot2", "rlang")
+required_pkgs <- c( "sparklyr", "dplyr", "data.table", "purrr", "tibble", "writexl", "ggplot2", "rlang", "survival", "survminer")
 invisible(lapply(required_pkgs, function(pkg) {
   if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
   library(pkg, character.only = TRUE)
@@ -124,6 +124,9 @@ tryCatch({
   
   total_dose_df <- flatten_entity_df(dfs[["total_dose"]])
   # write_xlsx(total_dose_df, "total_dose_flattened.xlsx")
+  
+  survival_characteristic_df <- flatten_entity_df(dfs[["survival_characteristic"]])
+  # write_xlsx(survival_characteristic_df, "survival_characteristic_flattened.xlsx")
 }, error = function(e) {
   stop("Error flattening or writing entities: ", e$message)
 })
@@ -157,29 +160,122 @@ tryCatch({
 })
 
 # Plot Value Distribution
+suppressWarnings(
+  tryCatch({
+    # Change this value as needed
+    column_name <- "censor_status"
+    
+    value_percentages <- merged_df %>%
+      count(!!sym(column_name)) %>%
+      mutate(
+        Percentage = round((n / sum(n)) * 100, 2),
+        Label = paste0(Percentage, "%")
+      )
+    
+    write_xlsx(value_percentages %>% select(!!sym(column_name), Percentage), "value_percentages.xlsx")
+    
+    ggplot(value_percentages, aes(x = reorder(!!sym(column_name), -Percentage), y = Percentage, fill = !!sym(column_name))) +
+      geom_bar(stat = "identity", width = 0.7) +
+      geom_text(aes(label = Label), vjust = -0.5) +
+      labs(
+        title = paste("Distribution of", column_name),
+        x = column_name,
+        y = "Percentage (%)"
+      ) +
+      theme_minimal() +
+      theme(legend.position = "none")
+  }, error = function(e) {
+    message("Error generating plot: ", e$message)
+  })
+)
+
+# Survival Curves
+# 1. Overall Survival Curve
 tryCatch({
-  # Change this value as needed
-  column_name <- "censor_status"
-  
-  value_percentages <- merged_df %>%
-    count(!!sym(column_name)) %>%
-    mutate(
-      Percentage = round((n / sum(n)) * 100, 2),
-      Label = paste0(Percentage, "%")
-    )
-  
-  write_xlsx(value_percentages %>% select(!!sym(column_name), Percentage), "value_percentages.xlsx")
-  
-  ggplot(value_percentages, aes(x = reorder(!!sym(column_name), -Percentage), y = Percentage, fill = !!sym(column_name))) +
-    geom_bar(stat = "identity", width = 0.7) +
-    geom_text(aes(label = Label), vjust = -0.5) +
-    labs(
-      title = paste("Distribution of", column_name),
-      x = column_name,
-      y = "Percentage (%)"
-    ) +
-    theme_minimal() +
-    theme(legend.position = "none")
+  diagnosis_age_df <- timing_df %>%
+    filter(disease_phase == "Initial Diagnosis") %>%
+    select(dst_id, age_at_disease_phase) %>%
+    distinct()
 }, error = function(e) {
-  message("Error generating plot: ", e$message)
+  message("ERROR extracting diagnosis age: ", conditionMessage(e))
+})
+
+tryCatch({
+  survival_data <- survival_characteristic_df %>%
+    select(dst_id, age_at_lkss, lkss) %>%
+    inner_join(diagnosis_age_df, by = "dst_id") %>%
+    mutate(
+      time_years = (age_at_lkss - age_at_disease_phase) / 365.25,
+      event = ifelse(lkss == "Dead", 1, 0)
+    ) %>%
+    filter(
+      !is.na(time_years),
+      !is.na(event),
+      time_years >= 0
+    )
+}, error = function(e) {
+  message("ERROR preparing Overall Survival data: ", conditionMessage(e))
+})
+
+tryCatch({
+  km_fit_overall <- survfit(Surv(time_years, event) ~ 1, data = survival_data)
+  ggsurvplot(
+    km_fit_overall,
+    conf.int = TRUE,
+    risk.table = TRUE,
+    risk.table.col = "black",
+    risk.table.height = 0.25,
+    surv.median.line = "hv",
+    xlab = "Time Since Diagnosis (Years)",
+    ylab = "Overall Survival Probability",
+    title = "Kaplan-Meier Overall Survival Curve",
+    palette = "Dark2",
+    ggtheme = theme_minimal(base_size = 14)
+  )
+}, error = function(e) {
+  message("ERROR fitting or plotting Overall Survival: ", conditionMessage(e))
+})
+
+# 2. Event-Free Survival Curve
+tryCatch({
+  efs_data <- subject_df %>%
+    select(id, age_at_censor_status, censor_status) %>%
+    inner_join(diagnosis_age_df, by = c("id" = "dst_id")) %>%
+    mutate(
+      time_years = (age_at_censor_status - age_at_disease_phase) / 365.25,
+      event = ifelse(censor_status == "Subject has had one or more events", 1, 0)
+    ) %>%
+    filter(
+      !is.na(time_years),
+      !is.na(event),
+      time_years >= 0
+    )
+}, error = function(e) {
+  message("ERROR preparing Event-Free Survival data: ", conditionMessage(e))
+})
+
+tryCatch({
+  km_fit_efs <- survfit(Surv(time_years, event) ~ 1, data = efs_data)
+  ggsurvplot(
+    km_fit_efs,
+    conf.int = TRUE,
+    risk.table = TRUE,
+    risk.table.col = "black",
+    risk.table.height = 0.25,
+    surv.median.line = "hv",
+    xlab = "Time Since Diagnosis (Years)",
+    ylab = "Event-Free Survival Probability",
+    title = "Kaplan-Meier Event-Free Survival Curve",
+    palette = "Dark2",
+    ggtheme = theme_minimal(base_size = 14)
+  )
+}, error = function(e) {
+  message("ERROR fitting or plotting Event-Free Survival: ", conditionMessage(e))
+})
+
+tryCatch({
+  write_xlsx(survival_data, "overall_survival_data.xlsx")
+  write_xlsx(efs_data, "event_free_survival_data.xlsx")
+}, error = function(e) {
+  message("ERROR writing Excel files: ", conditionMessage(e))
 })
