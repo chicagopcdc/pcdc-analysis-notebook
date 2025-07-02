@@ -50,7 +50,7 @@ If not, you can manually copy and paste the code from the repository into a new 
 ```
 3. Update your R script to reference the uploaded file:
 
-```r
+```bash
 # Replace 'your_file.avro' with your actual filename
 avro_file_path <- "/home/rstudio/your_file.avro"
 ```

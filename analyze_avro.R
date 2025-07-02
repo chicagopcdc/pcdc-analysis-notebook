@@ -1,9 +1,14 @@
 # Load libraries
-required_pkgs <- c( "sparklyr", "dplyr", "data.table", "purrr", "tibble", "writexl", "ggplot2", "rlang", "survival", "survminer")
-invisible(lapply(required_pkgs, function(pkg) {
-  if (!requireNamespace(pkg, quietly = TRUE)) install.packages(pkg)
-  library(pkg, character.only = TRUE)
-}))
+tryCatch({
+  required_pkgs <- c("sparklyr", "dplyr", "data.table", "purrr", "tibble",
+          "writexl", "ggplot2", "rlang", "survival", "survminer")
+  
+  install.packages(setdiff(required_pkgs, rownames(installed.packages())))
+  
+  invisible(lapply(required_pkgs, library, character.only = TRUE))
+}, error = function(e) {
+  message("An error occurred: ", e$message)
+})
 
 # Connect to Spark
 tryCatch({
