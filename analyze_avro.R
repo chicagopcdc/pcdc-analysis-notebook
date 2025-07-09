@@ -1,7 +1,7 @@
 # Load libraries
 tryCatch({
   required_pkgs <- c("sparklyr", "dplyr", "data.table", "purrr", "tibble",
-          "writexl", "ggplot2", "rlang", "survival", "survminer")
+          "writexl", "ggplot2", "rlang", "survival", "survminer", "ggpubr", "tidyr")
   
   install.packages(setdiff(required_pkgs, rownames(installed.packages())))
   
@@ -283,4 +283,237 @@ tryCatch({
   write_xlsx(efs_data, "event_free_survival_data.xlsx")
 }, error = function(e) {
   message("ERROR writing Excel files: ", conditionMessage(e))
+})
+
+# Flatten and prepare SMN data
+tryCatch({
+  person_df <- flatten_entity_df(dfs[["person"]])
+  secondary_malignant_neoplasm_df <- flatten_entity_df(dfs[["secondary_malignant_neoplasm"]])
+}, error = function(e) {
+  message("Error flattening entity data: ", e$message)
+})
+
+# Filter SMN Yes/No
+tryCatch({
+  smn_df <- secondary_malignant_neoplasm_df %>%
+    filter(smn_yn %in% c("Yes", "No")) %>%
+    select(dst_id, smn_yn) %>%
+    distinct()
+}, error = function(e) {
+  message("Error filtering SMN data: ", e$message)
+})
+
+# Merge with subject_df
+tryCatch({
+  summary_df <- merge(
+    smn_df,
+    subject_df[, c("id", "dst_id")],
+    by.x = "dst_id",
+    by.y = "id",
+    all.x = TRUE,
+    suffixes = c("", "_subject")
+  )
+}, error = function(e) {
+  message("Error merging with subject_df: ", e$message)
+})
+
+# Merge with person_df
+tryCatch({
+  summary_df <- merge(
+    summary_df,
+    person_df,
+    by.x = "dst_id_subject",
+    by.y = "id",
+    all.x = TRUE,
+    suffixes = c("", "_person")
+  )
+}, error = function(e) {
+  message("Error merging with person_df: ", e$message)
+})
+
+# Filter timing for Initial Diagnosis
+tryCatch({
+  timing_filtered <- timing_df %>%
+    filter(disease_phase == "Initial Diagnosis") %>%
+    select(dst_id, age_at_disease_phase) %>%
+    distinct(dst_id, .keep_all = TRUE)
+}, error = function(e) {
+  message("Error filtering timing_df: ", e$message)
+})
+
+# Merge with timing
+tryCatch({
+  smn_analysis_df <- merge(
+    summary_df,
+    timing_filtered,
+    by = "dst_id",
+    all.x = TRUE,
+    suffixes = c("", "_timing")
+  )
+}, error = function(e) {
+  message("Error merging with timing_df: ", e$message)
+})
+
+# Export final summary
+tryCatch({
+  write_xlsx(smn_analysis_df, "smn_analysis.xlsx")
+}, error = function(e) {
+  message("Error exporting final summary: ", e$message)
+})
+
+# Prepare age_df
+tryCatch({
+  age_df <- smn_analysis_df %>%
+    filter(!is.na(age_at_disease_phase))
+}, error = function(e) {
+  message("Error preparing age_df: ", e$message)
+})
+
+# Calculate means
+tryCatch({
+  mean_age_yes <- age_df %>%
+    filter(smn_yn == "Yes") %>%
+    summarise(mean = mean(age_at_disease_phase)) %>%
+    pull(mean)
+
+  mean_age_no <- age_df %>%
+    filter(smn_yn == "No") %>%
+    summarise(mean = mean(age_at_disease_phase)) %>%
+    pull(mean)
+}, error = function(e) {
+  message("Error calculating mean age: ", e$message)
+})
+
+# Add age groups
+tryCatch({
+  age_df <- age_df %>%
+    mutate(age_group = ifelse(age_at_disease_phase < 18, "< 18 mo", ">= 18 mo"))
+}, error = function(e) {
+  message("Error assigning age groups: ", e$message)
+})
+
+# Age group summary
+age_group_summary <- tryCatch({
+  age_df %>%
+    group_by(smn_yn, age_group) %>%
+    summarise(n = n(), .groups = "drop") %>%
+    group_by(smn_yn) %>%
+    mutate(percentage = round(100 * n / sum(n), 1)) %>%
+    select(smn_yn, age_group, percentage) %>%
+    pivot_wider(names_from = smn_yn, values_from = percentage)
+}, error = function(e) {
+  message("Error summarizing age groups: ", e$message)
+  tibble(age_group = character(), Yes = numeric(), No = numeric())
+})
+
+# Sex summary
+sex_summary <- tryCatch({
+  smn_analysis_df %>%
+    filter(sex %in% c("Male", "Female")) %>%
+    group_by(smn_yn, sex) %>%
+    summarise(n = n(), .groups = "drop") %>%
+    group_by(smn_yn) %>%
+    mutate(percentage = round(100 * n / sum(n), 1)) %>%
+    select(smn_yn, sex, percentage) %>%
+    pivot_wider(names_from = smn_yn, values_from = percentage)
+}, error = function(e) {
+  message("Error summarizing sex distribution: ", e$message)
+  tibble(sex = character(), Yes = numeric(), No = numeric())
+})
+
+# Labels
+tryCatch({
+  sample_label_age <- paste0(nrow(age_df), " (", sum(age_df$smn_yn == "Yes"), ")")
+  sample_label_sex <- paste0(nrow(smn_analysis_df), " (", sum(smn_analysis_df$smn_yn == "Yes"), ")")
+}, error = function(e) {
+  message("Error creating sample size labels: ", e$message)
+})
+
+# Summary table
+tryCatch({
+  summary_table <- tibble::tibble(
+    `Co-variate` = c(
+      "Mean age at diagnosis (mo)",
+      "Age at diagnosis",
+      "< 18 (mo)",
+      ">= 18 (mo)",
+      "Sex",
+      "Female",
+      "Male"
+    ),
+    `Sample Size (SMN)` = c(
+      sample_label_age,
+      sample_label_age,
+      "",
+      "",
+      sample_label_sex,
+      "",
+      ""
+    ),
+    `SMN Formed` = c(
+      round(mean_age_yes, 1),
+      "",
+      age_group_summary$Yes[age_group_summary$age_group == "< 18 mo"],
+      age_group_summary$Yes[age_group_summary$age_group == ">= 18 mo"],
+      "",
+      sex_summary$Yes[sex_summary$sex == "Female"],
+      sex_summary$Yes[sex_summary$sex == "Male"]
+    ),
+    `No SMN Formed` = c(
+      round(mean_age_no, 1),
+      "",
+      age_group_summary$No[age_group_summary$age_group == "< 18 mo"],
+      age_group_summary$No[age_group_summary$age_group == ">= 18 mo"],
+      "",
+      sex_summary$No[sex_summary$sex == "Female"],
+      sex_summary$No[sex_summary$sex == "Male"]
+    )
+  )
+
+  summary_table_clean <- summary_table %>%
+    mutate(across(everything(), ~ ifelse(is.na(.), "", as.character(.))))
+}, error = function(e) {
+  message("Error creating summary table: ", e$message)
+})
+
+# Statistical tests
+tryCatch({
+  p_age <- t.test(age_at_disease_phase ~ smn_yn, data = age_df)$p.value
+  p_age_group <- fisher.test(table(age_df$age_group, age_df$smn_yn))$p.value
+
+  sex_filtered <- smn_analysis_df %>%
+    filter(sex %in% c("Male", "Female"))
+
+  sex_table <- table(sex_filtered$sex, sex_filtered$smn_yn)
+  p_sex <- chisq.test(sex_table)$p.value
+}, error = function(e) {
+  message("Error performing statistical tests: ", e$message)
+})
+
+# Add p-values
+tryCatch({
+  summary_table_clean <- summary_table_clean %>%
+    mutate(`p-value` = c(
+      sprintf("%.3f", p_age),
+      "",
+      sprintf("%.3f", p_age_group),
+      "",
+      "",
+      sprintf("%.3f", p_sex),
+      ""
+    ))
+}, error = function(e) {
+  message("Error adding p-values to summary: ", e$message)
+})
+
+# Display table
+tryCatch({
+  gg_table <- ggtexttable(
+    summary_table_clean,
+    rows = NULL,
+    theme = ttheme("classic", base_size = 16)
+  )
+  print(gg_table)
+}, error = function(e) {
+  message("Error displaying summary table: ", e$message)
 })
