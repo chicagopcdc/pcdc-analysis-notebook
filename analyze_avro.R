@@ -517,3 +517,68 @@ tryCatch({
 }, error = function(e) {
   message("Error displaying summary table: ", e$message)
 })
+
+# Alternative dynamic code to calculate the percentage of SMN and non-SMN for a given covariate.
+# If we have N covariates, we can use this function to calculate the percentages for each.
+summarize_selected_categorical_by_smn <- function(data, selected_columns = NULL, values_to_ignore = list()) {
+
+  if (is.null(selected_columns)) {
+    stop("Please provide a vector of column names in selected_columns.")
+  }
+  
+  results <- list()
+  
+  for (col in selected_columns) {
+    
+    if (!col %in% colnames(data)) {
+      warning(paste("Column", col, "not found. Skipping."))
+      next
+    }
+    
+    clean_data <- data %>%
+      filter(!is.na(smn_yn), !is.na(.data[[col]])) %>%
+      distinct(dst_id, smn_yn, .data[[col]])
+    
+    if (!is.null(values_to_ignore[[col]])) {
+      clean_data <- clean_data %>%
+        filter(!.data[[col]] %in% values_to_ignore[[col]])
+    }
+    
+    yes_data <- clean_data %>% filter(smn_yn == "Yes")
+    no_data  <- clean_data %>% filter(smn_yn == "No")
+    
+    yes_summary <- yes_data %>%
+      group_by(.data[[col]]) %>%
+      summarise(n = n(), .groups = "drop") %>%
+      mutate(percentage_yes = 100 * n / sum(n))
+    
+    no_summary <- no_data %>%
+      group_by(.data[[col]]) %>%
+      summarise(n = n(), .groups = "drop") %>%
+      mutate(percentage_no = 100 * n / sum(n))
+    
+    merged_summary <- full_join(
+      yes_summary %>% select(!!col, percentage_yes),
+      no_summary %>% select(!!col, percentage_no),
+      by = col
+    ) %>%
+      arrange(.data[[col]]) %>%
+      replace_na(list(percentage_yes = 0, percentage_no = 0))
+    
+    results[[col]] <- merged_summary
+  }
+  
+  return(results)
+}
+
+# Example
+results <- summarize_selected_categorical_by_smn(
+  data = smn_analysis_df,
+  selected_columns = c("race", "sex", "ethnicity"),
+  values_to_ignore = list(
+    sex = c("Other", "Unknown", "Undifferentiated", "None", "Not Reported"),
+    race = c( "Otheasr")
+  )
+)
+
+print(results$sex)
