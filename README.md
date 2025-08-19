@@ -71,3 +71,5 @@ And start it again later without rebuilding:
 ```bash
 docker start my-rstudio-container
 ```
+
+> For detailed documentation, see the GitHub Gist: [Table One Doc/Guideline](https://gist.github.com/Tusharjamdade/d5d017b2edc7362a39fc2e2b8f041499)
