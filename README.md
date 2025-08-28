@@ -1,73 +1,109 @@
-# RStudio Environment for AVRO File Analysis
+# PFB Data Analysis in RStudio
 
-## Prerequisites
+An interactive Shiny application for analyzing **Portable Format for Biomedical Data (PFB)** stored in **AVRO files**.  
+This tool enables researchers to:
 
-- [Docker](https://www.docker.com/) installed on your system
+- Flatten and explore AVRO datasets  
+- Perform **percentage distributions**  
+- Generate **Kaplan–Meier survival curves (OS & EFS)**  
+- Build **Table 1 summary statistics**  
+- Export results as **Excel (.xlsx)** and **plots (.png)**  
+
+The app runs inside an RStudio environment using Docker.
 
 ---
 
-##  How to Use
+## Getting Started
 
-### Step 1: Clone the Repository
+### 1. Prerequisites
 
-```bash
+-   Install [Docker](https://www.docker.com/) on your system
+
+### 2. Setup
+
+#### Clone the Repository
+
+``` bash
 git clone https://github.com/chicagopcdc/pcdc-analysis-notebook.git
 cd pcdc-analysis-notebook
 ```
 
-### Step 2: Build the Docker Image
+#### Build the Docker Image
 
-```bash
+``` bash
 docker build -t my-rstudio .
 ```
 
-### Step 3: Run the Container
+#### Run the Container
 
-```bash
+``` bash
 docker run -d --name my-rstudio-container -p 8787:8787 -e DISABLE_AUTH=true my-rstudio
 ```
 
-#### Access the rstudio interface
+### 3. Access the RStudio Environment
 
-Open your browser and visit:
+Once the container is running, open your browser and go to:
 
-```
-http://localhost:8787
-```
+    http://localhost:8787
 
-You will find the `analyze_avro.R` file available in `/home/rstudio`.
+No login credentials are required (`DISABLE_AUTH=true`).
 
-If not, you can manually copy and paste the code from the repository into a new R script.
+Inside RStudio, you will find **4 pre-loaded files** under
+`/home/rstudio`.\
+The entry point for the Shiny app is:
+
+    app.R
+
+Run `app.R` to launch the application.
+
+------------------------------------------------------------------------
 
 
-### Step 4: Upload the AVRO File
+## Workflow
 
-1. In RStudio's Files pane, click Upload and select your `.avro` file.
-2. Once uploaded, note the full path, usually:
+### Step 1: Upload AVRO (PFB format)
+- In the UI, upload your **PFB AVRO file**.  
+- Supported format: **Portable Format for Biomedical Data (PFB)**.
 
-```bash
-/home/rstudio/your_file.avro
-```
-3. Update your R script to reference the uploaded file:
+### Step 2: Select Entities
+- Core entities automatically included:  
+  - `subject`  
+  - `person`  
+  - `timing`  
+  - `survival_characteristic`  
+- You can select **additional entities** to join with the dataset.
 
-```bash
-# Replace 'your_file.avro' with your actual filename
-avro_file_path <- "/home/rstudio/your_file.avro"
-```
-And then you can perform operations on the file using your analysis code.
+### Step 3: Data Preparation
+- The selected entities will be **flattened** into a single table.  
+- Progress is displayed in the sidebar.
+
+### Step 4: Analyses
+- **Percentage Distribution**  
+  - Select a column and view percentage breakdowns.  
+  - Download `.xlsx` summary and `.png` plot.
+
+- **Survival Curves**  
+  - Overall Survival (OS) using `timing + survival_characteristic`.  
+  - Event-Free Survival (EFS) using `subject + timing (Initial Diagnosis)`.  
+  - Download plots as `.png`.
+
+- **Summary Table (Table 1)**  
+  - Without grouping → analyze all subjects together.  
+  - With grouping → upload an **Excel/TXT/CSV file** containing Subject IDs.  
+    - Group 1 = uploaded IDs  
+    - Group 2 = remaining subjects  
+  - Download results as `.xlsx`.
 
 ---
 
-### 💡 Tips
+## Container Management
 
-You can **stop** the container:
-
+Stop the container:
 ```bash
 docker stop my-rstudio-container
 ```
 
-And start it again later without rebuilding:
-
+Restart later (no rebuild required):
 ```bash
 docker start my-rstudio-container
 ```
