@@ -29,7 +29,8 @@ RUN wget https://archive.apache.org/dist/spark/spark-3.5.0/spark-3.5.0-bin-hadoo
 ENV SPARK_HOME=/opt/spark-3.5.0
 ENV PATH="$SPARK_HOME/bin:$PATH"
 
-COPY analyze_avro.R /home/rstudio/analyze_avro.R
+WORKDIR /home/rstudio
+COPY ui.R server.R global.R app.R ./
 
 RUN install2.r --error \
     --deps TRUE \
