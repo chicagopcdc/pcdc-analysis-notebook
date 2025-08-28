@@ -94,8 +94,8 @@ server <- function(input, output, session) {
     # CHANGED: Allow navigating to Survival from Distribution area after prep
     toggleState("go_surv_from_dist", rv$prep_done)
     # Keep existing chaining for these nav buttons as before
-    toggleState("go_efs", rv$os_done)
-    toggleState("go_table1")
+    toggleState("go_efs", rv$prep_done)
+    toggleState("go_table1",rv$prep_done)
   })
   
   # Upload AVRO 
