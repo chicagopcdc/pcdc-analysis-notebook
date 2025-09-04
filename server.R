@@ -612,6 +612,11 @@ server <- function(input, output, session) {
   
   output$overallSurvivalPlot <- renderPlot({
     req(rv$os_fit)
+  
+    # check median survival
+    med <- suppressWarnings(summary(rv$os_fit)$table["median"])
+    surv.median.opt <- if (!is.na(med) && med > 0) "hv" else NULL
+
     gp <- ggsurvplot(
       rv$os_fit,
       data = survival_df_clean(),
@@ -619,7 +624,7 @@ server <- function(input, output, session) {
       risk.table = TRUE,
       risk.table.col = "black",
       risk.table.height = 0.25,
-      surv.median.line = "hv",
+      surv.median.line = surv.median.opt,
       xlab = "Time Since Diagnosis (Years)",
       ylab = "Overall Survival Probability",
       title = "Kaplan-Meier Overall Survival Curve",
@@ -631,6 +636,11 @@ server <- function(input, output, session) {
   
   output$eventFreeSurvivalPlot <- renderPlot({
     req(rv$efs_fit)
+
+    # check median survival
+    med <- suppressWarnings(summary(rv$efs_fit)$table["median"])
+    surv.median.opt <- if (!is.na(med) && med > 0) "hv" else NULL
+    
     gp <- ggsurvplot(
       rv$efs_fit,
       data = efs_df_clean(),
@@ -638,7 +648,7 @@ server <- function(input, output, session) {
       risk.table = TRUE,
       risk.table.col = "black",
       risk.table.height = 0.25,
-      surv.median.line = "hv",
+      surv.median.line = surv.median.opt,
       xlab = "Time Since Diagnosis (Years)",
       ylab = "Event-Free Survival Probability",
       title = "Kaplan-Meier Event-Free Survival Curve",
@@ -669,12 +679,6 @@ observeEvent(input$overallSurvivalSubjectBtn, {
     surv_obj <- survfit(Surv(time_years, event) ~ 1, data = df_sub)
     rv$os_fit <- surv_obj
     rv$os_done <- TRUE
-    
-    if (min(surv_obj$surv) > 0.5) {
-      showNotification("⚠️ Median survival not reached in OS dataset.", type = "warning")
-    } else {
-      showNotification("Overall Survival (Uploaded IDs) fitted — plot will render below.", type = "message")
-    }
   }, error = function(e) {
     output$errorMsg <- renderText(paste("ERROR preparing Overall Survival (IDs):", conditionMessage(e)))
   })
@@ -697,12 +701,6 @@ observeEvent(input$eventFreeSurvivalSubjectBtn, {
     surv_obj <- survfit(Surv(time_years, event) ~ 1, data = df_sub)
     rv$efs_fit <- surv_obj
     rv$efs_done <- TRUE
-    
-    if (min(surv_obj$surv) > 0.5) {
-      showNotification("⚠️ Median survival not reached in EFS dataset.", type = "warning")
-    } else {
-      showNotification("Event-Free Survival (Uploaded IDs) fitted — plot will render below.", type = "message")
-    }
   }, error = function(e) {
     output$errorMsg <- renderText(paste("ERROR preparing EFS (IDs):", conditionMessage(e)))
   })

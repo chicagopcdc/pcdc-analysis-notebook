@@ -258,7 +258,7 @@ ui <- fluidPage(
           br(),
           wellPanel(
             h4("Covariate Filters"),
-            span(class = "muted", "Apply covariate filters. If you uploaded Subject IDs, Table 1 will be restricted to those cases."),
+            span(class = "muted", "Apply covariate filters. If you upload Subject IDs, a grouping will be created between the uploaded IDs and the remaining data."),
             br(), br(),
             div(id = "filter_container", div(id = "no_cards_msg", class = "muted", "No covariates added. Click 'Add Covariate' to begin.")),
             br(),
