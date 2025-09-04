@@ -20,6 +20,15 @@ if (!exists("ignored_covariates")) ignored_covariates <- character(0)
 if (!exists("%||%")) `%||%` <- function(a, b) if (!is.null(a)) a else b
 
 server <- function(input, output, session) {
+  uploaded_subject_ids_val <- reactiveVal(NULL)
+  uploaded_subject_file_name_val <- reactiveVal(NULL)
+  
+  # Initial render of the upload input
+  output$upload_excel_ui <- renderUI({
+    fileInput("upload_excel", "Choose Excel / CSV / TXT", 
+              accept = c(".xlsx", ".xls", ".csv", ".txt", ".tsv"))
+  })
+  
   
   # Holds any uploaded Subject IDs parsed from file (xlsx/csv/tsv/txt)
   uploaded_subject_ids_val <- reactiveVal(NULL)
@@ -47,7 +56,6 @@ server <- function(input, output, session) {
   
   # Session utilities
   observeEvent(input$reset_btn, { session$reload() })
-  
   output$progress_steps <- renderUI({
     tags$div(
       class = "muted",
@@ -174,35 +182,13 @@ server <- function(input, output, session) {
   observe({
     rv$selected_entities <- input$selected_entities %||% character(0)
   })
-  
-  observeEvent(input$select_all_entities, {
-    others <- setdiff(
-      rv$entity_types,
-      c("subject", "person", "timing", "survival_characteristic", ignored_entities)
-    )
-    updateCheckboxGroupInput(
-      session,
-      "selected_entities",
-      selected = if (isTRUE(input$select_all_entities)) sort(others) else character(0)
-    )
-    updateCheckboxInput(
-      session,
-      "select_all_entities",
-      value = input$select_all_entities,
-      label = if (isTRUE(input$select_all_entities)) "Deselect All Entities" else "Select All Entities"
-    )
-  })
+
   
   observeEvent(input$selected_entities, {
     others <- setdiff(
       rv$entity_types,
       c("subject", "person", "timing", "survival_characteristic", ignored_entities)
     )
-    if (length(input$selected_entities) == length(others)) {
-      updateCheckboxInput(session, "select_all_entities", value = TRUE,  label = "Deselect All Entities")
-    } else {
-      updateCheckboxInput(session, "select_all_entities", value = FALSE, label = "Select All Entities")
-    }
   })
   
   #  PREPARE: Flatten required + selected entities; merge 
@@ -249,18 +235,39 @@ server <- function(input, output, session) {
       incProgress(1, detail = "Done")
     })
     
+    # Columns to ignore by prefix
     ignored_prefixes <- c("id", "dst_id", "dst_name", "created_datetime", "updated_datetime")
-    dist_columns <- names(rv$final_df)[!vapply(
-      names(rv$final_df),
-      function(col) any(startsWith(as.character(col), ignored_prefixes)),
-      logical(1)
-    )]
     
-    cat_cols <- rv$final_df %>%
-      select(all_of(dist_columns)) %>%
-      select(where(~ is.factor(.) || is.character(.))) %>%
-      names()
-    updateSelectInput(session, "dist_col", choices = cat_cols)
+    # Keep only columns that do NOT start with ignored prefixes
+    dist_columns <- names(rv$final_df)[
+      !vapply(names(rv$final_df), function(col) any(startsWith(col, ignored_prefixes)), logical(1))
+    ]
+    
+    # Initialize vectors
+    cat_cols <- c()
+    num_cols <- c()
+    
+    # Loop through columns to classify
+    for (col in dist_columns) {
+      vec <- rv$final_df[[col]]
+      
+      # Flatten list columns if any
+      if (is.list(vec)) vec <- sapply(vec, function(x) if (length(x) > 1) paste0(x, collapse=";") else as.character(x))
+      vec_chr <- as.character(vec)
+      
+      # Determine if numeric-like
+      numeric_prop <- sum(!is.na(suppressWarnings(as.numeric(vec_chr)))) / max(1, sum(nzchar(vec_chr)))
+      if (numeric_prop >= 0.9) {
+        num_cols <- c(num_cols, col)
+      } else {
+        cat_cols <- c(cat_cols, col)
+      }
+    }
+    
+    # Update dropdown with categorical columns
+    updateSelectInput(session, "dist_col", choices = sort(cat_cols))
+    
+    
     
     rv$prep_done <- TRUE
     showNotification("Data prepared. You can now run Distribution, Survival, EFS, or Table 1.", type = "message")
@@ -304,6 +311,7 @@ server <- function(input, output, session) {
             x = column_name,
             y = "Percentage (%)"
           ) +
+          coord_flip() + 
           theme_minimal(base_size = 14) +
           theme(legend.position = "none")
       }, res = 120)
@@ -321,7 +329,10 @@ server <- function(input, output, session) {
     filename = function() paste0("value_percentages_", Sys.Date(), ".xlsx"),
     content  = function(file) {
       req(rv$dist_data)
-      write_xlsx(rv$dist_data %>% select(1, Percentage), file)
+      export_df <- rv$dist_data %>%
+        mutate(across(1, ~ ifelse(is.na(.), "N/A", as.character(.)))) %>% 
+        select(1, Percentage)
+      write_xlsx(export_df, file)
     }
   )
   
@@ -342,6 +353,7 @@ server <- function(input, output, session) {
           x = input$dist_col,
           y = "Percentage (%)"
         ) +
+        coord_flip() + 
         theme_minimal(base_size = 14) +
         theme(legend.position = "none")
       ggsave(file, gp, width = 10, height = 6, dpi = 150)
@@ -640,6 +652,137 @@ server <- function(input, output, session) {
     updateTabsetPanel(session, "mainTabs", selected = "Table1")
   })
   
+# Overall Survival (OS) with Uploaded IDs
+observeEvent(input$overallSurvivalSubjectBtn, {
+  ids <- uploaded_subject_ids_val()
+  
+  if (is.null(ids) || length(ids) == 0) {
+    showNotification("⚠️ Please upload Subject IDs before running Overall Survival.", type = "warning")
+    return()
+  }
+  
+  tryCatch({
+    df <- survival_df_clean()
+    df_sub <- df %>% filter(dst_id %in% ids)
+    validate(need(nrow(df_sub) > 0, "No matching Subject IDs found in OS data."))
+    
+    surv_obj <- survfit(Surv(time_years, event) ~ 1, data = df_sub)
+    rv$os_fit <- surv_obj
+    rv$os_done <- TRUE
+    
+    if (min(surv_obj$surv) > 0.5) {
+      showNotification("⚠️ Median survival not reached in OS dataset.", type = "warning")
+    } else {
+      showNotification("Overall Survival (Uploaded IDs) fitted — plot will render below.", type = "message")
+    }
+  }, error = function(e) {
+    output$errorMsg <- renderText(paste("ERROR preparing Overall Survival (IDs):", conditionMessage(e)))
+  })
+})
+
+# Event-Free Survival (EFS) with Uploaded IDs
+observeEvent(input$eventFreeSurvivalSubjectBtn, {
+  ids <- uploaded_subject_ids_val()
+  
+  if (is.null(ids) || length(ids) == 0) {
+    showNotification("⚠️ Please upload Subject IDs before running Event-Free Survival.", type = "warning")
+    return()
+  }
+  
+  tryCatch({
+    df <- efs_df_clean()
+    df_sub <- df %>% filter(id %in% ids)
+    validate(need(nrow(df_sub) > 0, "No matching Subject IDs found in EFS data."))
+    
+    surv_obj <- survfit(Surv(time_years, event) ~ 1, data = df_sub)
+    rv$efs_fit <- surv_obj
+    rv$efs_done <- TRUE
+    
+    if (min(surv_obj$surv) > 0.5) {
+      showNotification("⚠️ Median survival not reached in EFS dataset.", type = "warning")
+    } else {
+      showNotification("Event-Free Survival (Uploaded IDs) fitted — plot will render below.", type = "message")
+    }
+  }, error = function(e) {
+    output$errorMsg <- renderText(paste("ERROR preparing EFS (IDs):", conditionMessage(e)))
+  })
+})
+
+# Clear Uploaded IDs (reset both uploaders)
+observeEvent(input$clear_ids_btn, {
+  # Reset stored IDs + filename
+  uploaded_subject_ids_val(NULL)
+  uploaded_subject_file_name_val(NULL)
+  rv$uploaded_subject_ids_val <- list()
+  
+  # Reset the Excel/CSV/TXT uploader
+  output$upload_excel_ui <- renderUI({
+    fileInput("upload_excel", "Choose Excel / CSV / TXT", 
+              accept = c(".xlsx", ".xls", ".csv", ".txt", ".tsv"))
+  })
+  
+  # Reset the Subject IDs uploader
+  output$upload_ids_ui <- renderUI({
+    fileInput(
+      "upload_subject_ids",
+      "Upload Subject IDs (CSV/TXT, one ID per line):",
+      accept = c(".csv", ".txt")
+    )
+  })
+  
+  showNotification("Uploaded Subject IDs have been cleared.", type = "message")
+})
+
+# Download OS Plot as PNG
+output$download_os_png <- downloadHandler(
+  filename = function() {
+    paste0("overall_survival_", Sys.Date(), ".png")
+  },
+  content = function(file) {
+    req(rv$os_fit)
+    gp <- ggsurvplot(
+      rv$os_fit,
+      data = survival_df_clean(),
+      conf.int = TRUE,
+      risk.table = TRUE,
+      risk.table.col = "black",
+      risk.table.height = 0.25,
+      surv.median.line = "hv",
+      xlab = "Time Since Diagnosis (Years)",
+      ylab = "Overall Survival Probability",
+      title = "Kaplan-Meier Overall Survival Curve",
+      palette = "Dark2",
+      ggtheme = theme_minimal(base_size = 14)
+    )
+    ggsave(file, plot = gp$plot, device = "png", width = 8, height = 6, dpi = 300)
+  }
+)
+
+# Download EFS Plot as PNG
+output$download_efs_png <- downloadHandler(
+  filename = function() {
+    paste0("event_free_survival_", Sys.Date(), ".png")
+  },
+  content = function(file) {
+    req(rv$efs_fit)
+    gp <- ggsurvplot(
+      rv$efs_fit,
+      data = efs_df_clean(),
+      conf.int = TRUE,
+      risk.table = TRUE,
+      risk.table.col = "black",
+      risk.table.height = 0.25,
+      surv.median.line = "hv",
+      xlab = "Time Since Diagnosis (Years)",
+      ylab = "Event-Free Survival Probability",
+      title = "Kaplan-Meier Event-Free Survival Curve",
+      palette = "Dark2",
+      ggtheme = theme_minimal(base_size = 14)
+    )
+    ggsave(file, plot = gp$plot, device = "png", width = 8, height = 6, dpi = 300)
+  }
+)
+  
   # TABLE 1 — UI cards & grouping handling
   card_ids <- reactiveVal(character(0))
   counter  <- reactiveVal(0)
@@ -686,25 +829,23 @@ server <- function(input, output, session) {
     
     try({
       if (ext %in% c("xlsx", "xls")) {
-        df <- suppressWarnings(read_excel(path, col_names = TRUE))
+        df <- suppressWarnings(readxl::read_excel(path, col_names = TRUE))
         if (ncol(df) > 0) {
           cn <- names(df)
           pick <- which(tolower(cn) %in% c("id", "subject_id", "subjectid"))
           col <- if (length(pick) >= 1) cn[pick[1]] else cn[1]
           ids <- as.character(df[[col]])
         }
-      } else if (ext %in% c("txt", "csv", "tsv")) {
-        if (ext == "txt") {
-          lines <- readLines(path, warn = FALSE)
-          ids <- trimws(lines)
-          ids <- ids[nzchar(ids)]
-        } else if (ext == "csv") {
-          tmp <- read.csv(path, stringsAsFactors = FALSE)
-          if (ncol(tmp) >= 1) ids <- as.character(tmp[[1]])
-        } else if (ext == "tsv") {
-          tmp <- read.delim(path, stringsAsFactors = FALSE)
-          if (ncol(tmp) >= 1) ids <- as.character(tmp[[1]])
-        }
+      } else if (ext %in% c("txt")) {
+        lines <- readLines(path, warn = FALSE)
+        ids <- trimws(lines)
+        ids <- ids[nzchar(ids)]
+      } else if (ext %in% c("csv")) {
+        tmp <- read.csv(path, stringsAsFactors = FALSE)
+        if (ncol(tmp) >= 1) ids <- as.character(tmp[[1]])
+      } else if (ext %in% c("tsv")) {
+        tmp <- read.delim(path, stringsAsFactors = FALSE)
+        if (ncol(tmp) >= 1) ids <- as.character(tmp[[1]])
       }
     }, silent = TRUE)
     
@@ -723,7 +864,7 @@ server <- function(input, output, session) {
       uploaded_subject_file_name_val(bn)
       showNotification(paste("Parsed", length(ids), "unique IDs from upload."), type = "message")
     }
-  }, ignoreNULL = FALSE)
+  }, ignoreInit = TRUE)
   
   uploaded_subject_ids <- reactive({ uploaded_subject_ids_val() })
   
@@ -791,8 +932,6 @@ server <- function(input, output, session) {
       where = "afterBegin",
       ui = tags$div(id = "no_cards_msg", class = "muted", "No covariates added. Click 'Add Covariate' to begin.")
     )
-    
-    try(reset("upload_excel"), silent = TRUE)
     
     # Clear stored uploaded subject IDs and filename
     uploaded_subject_ids_val(NULL)
