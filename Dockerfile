@@ -42,7 +42,8 @@ RUN install2.r --error \
     selectr \
     caTools \
     data.table \
-    purrr
+    purrr \
+    writexl
 
 RUN groupadd -r -g 1001 user && useradd -r -g user -u 1001 user
 WORKDIR /home/user

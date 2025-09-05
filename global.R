@@ -2,7 +2,6 @@
 library(dplyr)
 library(purrr)
 library(tibble)
-library(writexl)
 library(sparklyr)
 library(DT)
 library(ggplot2)
