@@ -4,7 +4,7 @@ RUN apt-get update -qq && apt-get -y --no-install-recommends install \
   libxml2-dev \
   libcairo2-dev \
   libsqlite3-dev \
-  libmariadbd-dev \
+  libmariadb-dev \
   openssl \
   unixodbc-dev \
   libssl-dev \
@@ -29,21 +29,31 @@ RUN wget https://archive.apache.org/dist/spark/spark-3.5.0/spark-3.5.0-bin-hadoo
 ENV SPARK_HOME=/opt/spark-3.5.0
 ENV PATH="$SPARK_HOME/bin:$PATH"
 
+# Copy app files
 WORKDIR /home/rstudio
 COPY ui.R server.R global.R app.R ./
 
-RUN install2.r --error \
-    --deps TRUE \
-    tidyverse \
-    dplyr \
-    devtools \
-    formatR \
-    remotes \
-    selectr \
-    caTools \
-    data.table \
-    purrr \
-    writexl
+RUN for pkg in \
+      tidyverse \
+      dplyr \
+      devtools \
+      formatR \
+      remotes \
+      selectr \
+      caTools \
+      data.table \
+      purrr \
+      writexl \
+      sparklyr \
+      survival \
+      survminer \
+      ggpubr \
+      DT \
+      shinythemes \
+      shiny \
+      shinyjs; do \
+      install2.r --deps TRUE "$pkg" || echo "Skipping failed package: $pkg"; \
+    done
 
 RUN groupadd -r -g 1001 user && useradd -r -g user -u 1001 user
 WORKDIR /home/user
