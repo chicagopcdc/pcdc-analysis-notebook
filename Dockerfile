@@ -1,19 +1,21 @@
 FROM quay.io/cdis/rstudio:4.2.1
 
 RUN apt-get update -qq && apt-get -y --no-install-recommends install \
-  libxml2-dev \
-  libcairo2-dev \
-  libsqlite3-dev \
-  libmariadb-dev \
-  openssl \
-  unixodbc-dev \
-  libssl-dev \
-  libssh2-1-dev \
-  libpq-dev \
-  vim \
-  wget \
-  openjdk-11-jdk \
-  && apt-get clean
+    libxml2-dev \
+    libcairo2-dev \
+    libsqlite3-dev \
+    libmariadb-dev \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libssh2-1-dev \
+    libpq-dev \
+    libfontconfig1 \
+    libfreetype6-dev \
+    libpng-dev \
+    vim \
+    wget \
+    openjdk-11-jdk \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Set Java environment
 ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
@@ -33,34 +35,19 @@ ENV PATH="$SPARK_HOME/bin:$PATH"
 WORKDIR /home/rstudio
 COPY ui.R server.R global.R app.R ./
 
-RUN for pkg in \
-      tidyverse \
-      dplyr \
-      devtools \
-      formatR \
-      remotes \
-      selectr \
-      caTools \
-      data.table \
-      purrr \
-      writexl \
-      sparklyr \
-      survival \
-      survminer \
-      ggpubr \
-      DT \
-      shinythemes \
-      shiny \
-      shinyjs; do \
-      install2.r --deps TRUE "$pkg" || echo "Skipping failed package: $pkg"; \
-    done
+# Install pak first
+RUN R -e "install.packages('pak', repos='https://r-lib.github.io/p/pak/dev/')"
+
+RUN R -e "pak::pkg_install(c( \
+  'tidyverse','dplyr','devtools','formatR','remotes','selectr', \
+  'caTools','data.table','purrr','writexl','sparklyr','survival', \
+  'survminer','ggpubr','DT','shinythemes','shiny','shinyjs' \
+), ask = FALSE)"
 
 RUN groupadd -r -g 1001 user && useradd -r -g user -u 1001 user
 WORKDIR /home/user
-EXPOSE 8787
-CMD ["/init"]
-
 RUN usermod -a -G users rstudio
+
 RUN echo '#!/usr/bin/with-contenv bash \
           \n## load /etc/environment vars first: \
           \n for line in $( cat /etc/environment ) ; do export $line ; done \
@@ -69,3 +56,6 @@ RUN echo '#!/usr/bin/with-contenv bash \
           \n echo www-frame-origin=${WWW_FRAME_ORIGIN} >> /etc/rstudio/rserver.conf \
           \n exec /usr/lib/rstudio-server/bin/rserver --server-daemonize 0' \
           > /etc/services.d/rstudio/run
+
+EXPOSE 8787
+CMD ["/init"]
