@@ -13,6 +13,7 @@ library(lubridate)
 library(survminer)
 library(readxl)
 library(utils)
+library(writexl)
 
 if (!exists("ignored_entities"))   ignored_entities   <- character(0)
 if (!exists("ignored_covariates")) ignored_covariates <- character(0)

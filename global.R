@@ -9,6 +9,7 @@ library(rlang)
 library(survival)
 library(survminer)
 library(tidyr)
+library(writexl)
 
 # Increase maximum file upload size in Shiny
 options(shiny.maxRequestSize = 50 * 1024^2) # 50 MB
